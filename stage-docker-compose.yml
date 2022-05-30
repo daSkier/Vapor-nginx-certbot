@@ -1,0 +1,139 @@
+version: "3.4"
+
+services:
+  #API is the vapor container    
+  api:
+    image: [docker-image-name]:latest.stage
+    env_file: .env.stage
+    command: ["serve", "--env", "$env", "--hostname", "0.0.0.0", "--port", "8080"]
+    networks: 
+      - app-network
+  
+  #MIGRATE will run the vapor container and execute the auto-migration
+  migrate: 
+    image: [docker-image-name]:latest.stage
+    env_file: .env.stage
+    networks:
+      - app-network
+    command: ["migrate", "--yes"]
+    
+  #REVERT will run the vapor container and execute the revert script and reset the DB
+  revert: 
+    image: [docker-image-name]:latest.stage
+    env_file: .env.stage
+    networks: 
+      - app-network
+    command: ["migrate", "--revert", "--yes"]
+    
+  #s3import will run the vapor container and execute the s3 import command
+  s3import: 
+    image: [docker-image-name]:latest.stage
+    env_file: .env.stage
+    networks:
+      - app-network
+    command: ["MyCustomCommand", "--import", "s3Full"]
+    
+  #s3update will run the vapor container and execute the s3 update command
+  s3update: 
+    image: [docker-image-name]:latest.stage
+    env_file: .env.stage
+    networks: 
+      - app-network
+    command: ["MyCustomCommand", "--import", "s3Delta"]
+    
+  #pullUpdates will run the vapor container and execute the pullUpdates command
+  pullUpdates: 
+    image: [docker-image-name]:latest.stage
+    env_file: .env.stage
+    networks: 
+      - app-network
+    command: ["MyCustomCommand", "--import", "pullUpdates"]
+  
+  # NGINX image
+  nginx:
+    image: nginx:mainline-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - web-root:/var/www/html
+      - ./nginx-conf:/etc/nginx/conf.d
+      - certbot-etc:/etc/letsencrypt
+      - certbot-var:/var/lib/letsencrypt
+      - dhparam:/etc/ssl/certs
+    command: "/bin/sh -c 'while :; do sleep 6h; nginx -s reload; done & exec nginx -g \"daemon off;\"'"
+    depends_on:
+      - api
+    networks:
+      - app-network
+  
+  # CERTBOT updates the ssl certs from let's encrypt
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes: 
+      - certbot-etc:/etc/letsencrypt
+      - certbot-var:/var/lib/letsencrypt
+      - web-root:/var/www/html
+    depends_on:
+      - nginx
+    # First run cert setup
+    #command: certonly --webroot --webroot-path=/var/www/html --email username@example.com --agree-tos --no-eff-email -d example.com -d www.example.com -d stage.example.com -d example2.org -d stage.example2.org -d www.example2.org
+    # Subsequent run configuration
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+      
+volumes:
+  certbot-etc:
+  certbot-var:
+  web-root:
+    driver: local
+    driver_opts:
+      type: none
+      device: /home/servic-admin/nginx_project/views/ # I believe the /home/service-admin folder was created by me on the server
+      o: bind
+  dhparam:
+    driver: local
+    driver_opts:
+      type: none
+      device: /home/servic-admin/nginx_project/dhparam/ # I believe the /home/service-admin folder was created by me on the server
+      o: bind
+      
+networks:
+  app-network:
+    driver: bridge
+    
+# To build 
+# docker build -t [docker-image-name]:[TAG] -f stage.Dockerfile .
+
+# To run (make sure correct image tag is used in the docker-compose file)
+# $ docker-compose -f stage-docker-compose.yml up
+
+# To get to bash interface
+# docker exec -i -t 23 /bin/bash
+
+# To update container on server
+# sudo docker-compose -f stage-docker-compose.yml pull api
+
+# Updated launch method on live server (in detached aka. background mode)
+# sudo docker-compose -f stage-docker-compose.yml up -d api nginx certbot
+
+# To run revert or migrate 
+# docker-compose -f stage-docker-compose.yml up migrate
+# docker-compose -f stage-docker-compose.yml up revert
+
+# To view docker-compose detached logs 
+# docker-compose -f stage-docker-compose.yml logs [-t 100 for past # of lines]
+    
+# To build and push  
+# docker build -t [docker-image-name]:[TAG] -f stage.Dockerfile .
+# docker login --username=[username]
+# docker images
+# docker tag [id] [docker-image-name]:[TAG]
+# docker push [docker-image-name]:[TAG]
+
+# To clean up old docker images 
+# docker system prune
+
+# To force image removal
+# docker system prune -a
